@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
@@ -92,24 +94,29 @@ router.post("/forgot-password", async (req, res) => {
         if (err) return res.status(500).send(err);
       }
     );
-    mailer.sendMail(
+    await mailer.sendMail(
       {
         to: email,
-        from: "teste@teste.com",
+        from: "noreply@pingui.com.br",
         template: "forgot-password",
         subject: "Troca de senha PINGUI",
-        context: { token }
+        context: {
+          link: `${
+            process.env.LOCATION == "PROD"
+              ? "https://bytemetech.github.io/fidelizapp-web/"
+              : "https://sharp-einstein-89f586.netlify.com"
+          }/reset-password.html?token=${token}`
+        }
       },
-      err => {
-        if (err)
+      (err, info) => {
+        if (err) {
           return res
             .status(400)
             .send({ error: "Cannot send forgot password email" });
-
-        return res.send();
+        }
+        return res.send({ message: "email sended" });
       }
     );
-    return res.send({ ta: "indo" });
   } catch (error) {
     console.log(error);
     return res
@@ -117,5 +124,40 @@ router.post("/forgot-password", async (req, res) => {
       .send({ error: "Error on forgot password, try again" });
   }
 });
+router.put("/forgot-password", async (req, res) => {
+  const { email, token, password } = req.body;
+  if (!token || !password || !email) {
+    return res.status(400).send({
+      error: "email, token and password needed to change a user password"
+    });
+  }
+  try {
+    let user = await User.findOne({ email }).select(
+      "+passwordResetToken passwordResetExpires"
+    );
+    if (!user) return res.status(404).send({ error: "user not found" });
+    if (user.passwordResetToken != token) {
+      console.log(token, user.passwordResetToken);
+      return res.status(401).send({ error: "Token wrong" });
+    }
+    let now = new Date();
+    if (now > user.passwordResetExpires)
+      return res
+        .status(401)
+        .send({ error: "Token expired, generate a new one" });
 
+    user.password = password;
+    user.passwordResetExpires = now;
+    await user.save();
+    const loginToken = jwt.sign({ id: user._id }, tokenProvider.secret, {
+      expiresIn: 311040000
+    });
+    return res.send({ token: loginToken });
+  } catch (err) {
+    return res.status(500).send({
+      error: "Error on change password, try again",
+      errorMessage: err
+    });
+  }
+});
 module.exports = app => app.use("/auth", router);
